@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "/Users/genio/Developer/KAIST/EE-415/EE415-PINTOS/src/threads",
+      "program": "/Users/genio/Developer/KAIST/EE-415/EE415-PINTOS/src/threads/build/Debug/outDebug"
+    }
+  ]
+}

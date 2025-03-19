@@ -1,0 +1,196 @@
+             +--------------------------+
+             |          EE 415          |
+             | PROJECT 2: USER PROGRAMS |
+             |     DESIGN DOCUMENT      |
+             +--------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Yow Siao Kang siaokang@kaist.ac.kr
+Abdulrahman Alabdulkarim genio@kaist.ac.kr
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+               ARGUMENT PASSING
+               ================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+When process_execute() is called with the full argument string, a copy of it is made for tokenization. start_process() then takes this string, parses it with strtok_r, and stores each token in argv[] in the correct order. The necessary thread structures are initialized, and any writes to the executable are blocked to prevent modification during execution.
+
+Next, push_arg_to_user_stack arranges the arguments on the stack in reverse order, aligns the stack, and includes argc, argv[] pointers, and a NULL return address. To avoid overflowing the stack, push_arg_to_user_stack decrements the stack pointer precisely by the needed space for each argument, ensuring efficient use of stack space. It also aligns the stack on a 4-byte boundary to prevent misalignment issues that could lead to overflow. This setup ensures the stack has the exact structure expected by the process at start. Finally, a simulated interrupt return (intr_exit) forces the thread to begin execution. 
+
+---- RATIONALE ----
+
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+In Pintos, strtok_r() is chosen over strtok() because it is a reentrant and thread-safe function. Unlike strtok(), which maintains its state between calls and can cause issues in multithreaded environments, strtok_r() includes an extra argument to store the context (or position) of the tokenization. This design makes it suitable for situations where tokenizing is required across multiple threads or nested loops.
+>> A4: In Pintos, the kernel separates commands into a executable name
+>> and arguments.  In Unix-like systems, the shell does this
+>> separation.  Identify at least two advantages of the Unix approach.
+The Unix approach offloads the task of argument parsing to the shell, reducing the burden on the kernel. This structure prevents users from directly passing invalid or unsafe arguments to the kernel, enhancing stability and security. Additionally, this separation allows the kernel to focus on lower-level operations, improving overall system performance and modularity.
+
+                 SYSTEM CALLS
+                 ============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+#ifdef USERPROG
+    /* Owned by userprog/process.c. */
+    uint32_t *pagedir;                  /* Page directory. */
+    struct thread *parent;              /* Parent thread. */
+    struct list child_list;             /* List of child threads. */
+    struct list_elem child_elem;        /* List element for child threads. */
+    struct semaphore wait_sema;         /* Semaphore for waiting. Used by wait syscall */
+    int exit_status;                    /* Exit status. for thread */
+    struct semaphore load_sema;         /* Semaphore for loading. Used to check sync load between parent and child */
+    bool load_success;                  /* Load success. Used to tell parent that it was loaded*/
+    struct file **fdt;                  /* File descriptor table. */
+    int next_fd;                        /* Next file descriptor. */
+    struct file *exec_file;             /* Executable file. */
+
+#endif
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+When a file is opened using the open system call, it is added to the process's list of active files, with a unique file descriptor assigned specifically for that process. This uniqueness applies within each process, so different processes can have the same file descriptor values for different files. When a file is closed, its file descriptor is released, making it available for reuse the next time a file is opened. If a file is opened multiple times without closing previous instances, each new open call generates a distinct file descriptor, keeping each file access separate within the process’s open file list.
+
+---- ALGORITHMS ----
+
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+
+>> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+In process_wait, the function searches the current thread's child_list to locate the specified child thread using its child_tid. If the child isn’t found, -1 is returned, indicating an invalid child ID. When the child is found, sema_down is called on the child’s semaphore, which suspends the parent until the child completes execution. Once the child exits, thread_exit calls sema_up, releasing the parent from waiting. Finally, process_wait retrieves the child’s exit status and returns it to the parent.
+
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+In our approach, we address the potential for invalid user-provided pointers by validating each pointer and string at every step where user memory is accessed. This strategy minimizes the risk of dereferencing a bad pointer, which could cause undefined behavior or compromise system stability. Here’s a summary of our error-handling and resource management:
+
+Pointer Validation:
+We use is_valid_pointer() to confirm if a user-provided address is valid by checking if it’s within the user address space and mapped in the process’s page directory. This validation happens before any data access, ensuring only safe addresses are dereferenced.
+In cases where a string pointer is received, is_valid_string() validates each byte in the string, verifying that it remains within the user address space and ends with a null terminator.
+System Call Handler:
+In syscall_handler, we read the system call number from the stack and validate pointers for each argument based on the expected system call. For example, in SYS_EXIT, we check the pointer at f->esp + 4 to ensure safe access to the argument value before dereferencing it. If any pointer is invalid, we terminate the process immediately by calling exit(-1).
+Resource Cleanup on Exit:
+In process_exit, we free all resources, such as the child list and file list, when a process exits. This cleanup applies whether the process exits normally or is terminated due to an invalid pointer access. This ensures that any temporarily allocated resources are consistently released, avoiding memory leaks or lock inconsistencies.
+Example:
+
+In the SYS_EXIT case, if f->esp + 4 is invalid, exit(-1) is called immediately, safely terminating the process without any further stack access. This straightforward validation approach keeps the main logic clear by handling pointer checks separately, avoiding clutter in the system call implementations.
+This approach strikes a balance between error handling and preserving readability in the primary logic, ensuring safe access to user memory while maintaining resource integrity on termination.
+
+---- SYNCHRONIZATION ----
+
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+
+In my implementation of exec, I ensure that the parent thread waits for the child to complete loading by using a semaphore (load_sema) for synchronization.
+
+Synchronized Loading:
+When process_execute is called, the parent initializes load_sema and sets load_success to false to indicate an unknown load status initially. After creating the child thread, the parent immediately waits on load_sema with sema_down. This blocks the parent, ensuring it doesn’t proceed until the child finishes loading.
+Passing Load Status:
+In start_process, the child sets parent->load_success to true if loading succeeds, otherwise leaves it as false. The child then calls sema_up to signal the parent, allowing it to check load_success after being unblocked. If loading failed, process_execute sets tid to TID_ERROR to indicate failure before returning.
+Adding to the Child List:
+The line list_push_back(&parent->child_list, &child->child_elem); is placed after sema_down, so the parent only adds the child to its list if loading was successful.
+This design ensures that exec doesn’t return until the loading status is confirmed, providing a reliable way for the parent to track the child process accurately.
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+In my implementation, I handle synchronization between a parent process (P) and a child process (C) to prevent race conditions and ensure resource cleanup under various scenarios:
+
+P Calls wait(C) Before C Exits:
+When P calls wait on C, it blocks on sema_down(&C->wait_sema) until C exits. When C calls thread_exit, it signals P with sema_up, unblocking P to retrieve C’s exit status and clean up any resources associated with C. This ensures P waits correctly and no race conditions occur.
+P Calls wait(C) After C Exits:
+If P calls wait(C) after C has already exited, C’s exit status is saved, and C’s resources are partially cleaned up in process_exit. When P eventually calls wait(C), it can access C’s exit status immediately without waiting and perform any final cleanup.
+P Terminates Without Waiting, Before C Exits:
+If P terminates without waiting on C, C’s parent pointer is set to NULL, indicating it no longer has a parent. C continues independently, and when it exits, it handles its own resource cleanup fully, ensuring no orphaned resources.
+P Terminates Without Waiting, After C Exits:
+If P terminates after C has already exited, C’s exit status and resources have already been freed. There’s no additional cleanup needed since both processes handle their own termination independently.
+Special Cases:
+A special case occurs if P calls wait multiple times on the same child or on a nonexistent child. In these cases, wait returns -1, ensuring that invalid calls are handled gracefully without affecting synchronization or resource cleanup.
+
+---- RATIONALE ----
+
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+I implemented access to user memory by validating pointers before accessing any user-specified memory. This way, each system call argument is checked using is_valid_pointer() and is_valid_string() to ensure the address is mapped and in user space. This approach is simple and provides safety by avoiding accidental dereferences of invalid pointers, which could lead to crashes or security issues.
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+The file descriptor design assigns each open file a unique identifier within the process, stored in the file descriptor table (fdt). This design keeps the file access process simple and ensures each descriptor is process-specific, avoiding conflicts between processes. One potential disadvantage is that the approach limits the number of open files per process by the table size, which could be restrictive in file-heavy applications. However, this trade-off simplifies tracking and closing files.
+
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+I have not changed it.
+
+               SURVEY QUESTIONS
+               ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?
